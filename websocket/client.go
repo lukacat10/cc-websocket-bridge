@@ -17,10 +17,10 @@ const (
 	writeWait = 10 * time.Second
 
 	// Time allowed to read the next pong message from the peer.
-	pongWait = 60 * time.Second
+	pongWait = 24 * time.Hour//60 * time.Second
 
 	// Send pings to peer with this period. Must be less than pongWait.
-	pingPeriod = (pongWait * 9) / 10
+	pingPeriod = 45 * time.Second//(pongWait * 9) / 10
 
 	// Maximum message size allowed from peer.
 	maxMessageSize = 512
@@ -48,6 +48,7 @@ type ConnectionStatus int
 const (
 	CandidateWithoutID ConnectionStatus = iota
 	Connected
+	AwaitingPassword
 	AwaitingAuthentication
 )
 
@@ -94,6 +95,8 @@ func (c *Client) HandleIncomingMsg(data []byte) {
 		}
 	case Connected:
 		c.communicate(data)
+	case AwaitingPassword:
+		c.handleAwaitingPassword(data)
 	case AwaitingAuthentication:
 		c.handleAuthentication(data)
 	}
@@ -103,10 +106,12 @@ func (c *Client) HandleIncomingMsg(data []byte) {
 func (c *Client) communicate(data []byte) {
 	pair := c.hub.clientPairs[c.ID]
 	if c.ClientType == Remote { // communicate should only be called when c is connected, so no need to check that.
+		log.Println("R -> CC: " + string(data))
 		pair.CC.Send <- data
 		return
 	}
 	if c.ClientType == CC && pair.Remote != nil && pair.Remote.ConnectionStatus == Connected {
+		log.Println("CC -> R: " + string(data))
 		pair.Remote.Send <- data
 		return
 	}
@@ -122,20 +127,20 @@ func (c *Client) onRegister() {
 	if c.ClientType == Remote {
 		log.Println("A connection of client type 'Remote' is now registered to ID " + strconv.Itoa(c.ID) + " and switched to status 'AwaitingAuthentication'")
 		c.ConnectionStatus = AwaitingAuthentication
-		builder := randstr()
-		c.Challenge = builder.String()
-		c.hub.clientPairs[c.ID].CC.Send <- []byte("print('" + c.Challenge + "')")
+		//builder := randstr()
+		//c.Challenge = builder.String()
+		//c.hub.clientPairs[c.ID].CC.Send <- []byte("print('" + c.Challenge + "')")
 		return
 	}
 	if c.ClientType == CC {
 		log.Println("A connection of client type 'CC' is now registered to ID " + strconv.Itoa(c.ID) + " and switched to status 'Connected'")
-		c.ConnectionStatus = Connected
+		c.ConnectionStatus = AwaitingPassword
 		return
 	}
 }
 
 func (c *Client) handleAuthentication(data []byte) {
-	if c.Challenge == string(data) {
+	if c.hub.clientPairs[c.ID].CC.Challenge == string(data) {
 		c.ConnectionStatus = Connected
 		log.Println("A connection of client type 'Remote' with ID " + strconv.Itoa(c.ID) + " successfully authenticated!")
 		return
@@ -144,7 +149,19 @@ func (c *Client) handleAuthentication(data []byte) {
 	c.Unregister()
 }
 
+func (c *Client) handleAwaitingPassword(data []byte) {
+	if len(string(data)) > 0 {
+		log.Println("A connection of client type 'CC' with ID " + strconv.Itoa(c.ID) + " chose a password: " + string(data))
+		c.Challenge = string(data)
+		c.ConnectionStatus = Connected
+		return
+	}
+	log.Println("A connection of client type 'CC' with ID " + strconv.Itoa(c.ID) + " failed to choose a password!")
+	//c.Unregister()
+}
+
 func (c *Client) Unregister() {
+	log.Println("Unregistered " + strconv.Itoa(c.ID))
 	pair, ok := c.hub.clientPairs[c.ID]
 	if ok {
 		if pair.CC != nil {
@@ -187,11 +204,25 @@ type IncomingMessage struct {
 func (c *Client) readPump() {
 	defer func() {
 		c.hub.unregister <- c
-		c.conn.Close()
+		err := c.conn.Close()
+		if err != nil {
+			log.Println("Closed a closed socket")
+		}
 	}()
 	c.conn.SetReadLimit(maxMessageSize)
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
-	c.conn.SetPongHandler(func(string) error { c.conn.SetReadDeadline(time.Now().Add(pongWait)); return nil })
+	c.conn.SetPongHandler(func(string) error {
+		c.conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+	c.conn.SetCloseHandler(func(code int, text string) error {
+		c.hub.unregister <- c
+		err := c.conn.Close()
+		if err != nil {
+			log.Println("Closed a closed socket 2")
+		}
+		return nil
+	})
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {

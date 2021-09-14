@@ -38,7 +38,8 @@ func (h *Hub) RegisterClientToClientPair(c *Client) error {
 	if c.ClientType == CC {
 		// ClientPair shouldn't exist. Ensure that...
 		if _, ok := h.clientPairs[c.ID]; ok {
-			h.unregister <- c
+			log.Println("Found a user already registered with this ID! Closing...")
+			c.unregisterCurrentOnly()
 			return &RegisterClientToClientPairFailedError{}
 		}
 		h.clientPairs[c.ID] = &ClientPair{
@@ -51,7 +52,8 @@ func (h *Hub) RegisterClientToClientPair(c *Client) error {
 	if c.ClientType == Remote {
 		// ClientPair should exist. Ensure that...
 		if _, ok := h.clientPairs[c.ID]; !ok {
-			h.unregister <- c
+			log.Println("Found a user already registered with this ID! Closing...")
+			c.unregisterCurrentOnly()
 			return &RegisterClientToClientPairFailedError{}
 		}
 		h.clientPairs[c.ID].Remote = c
@@ -61,6 +63,7 @@ func (h *Hub) RegisterClientToClientPair(c *Client) error {
 }
 func NewHub() *Hub {
 	return &Hub{
+		clientPairs: make(map[int]*ClientPair),
 		incoming:  	make(chan *IncomingMessage),
 		broadcast:  make(chan []byte),
 		register:   make(chan *Client),
@@ -88,6 +91,7 @@ func (h *Hub) Run() {
 				client.ClientType = Remote
 				log.Println("A new connection of type 'Remote' was made to the server!")
 			}
+			log.Println("IP: " + addr.String())
 			client.ConnectionStatus = CandidateWithoutID
 			client.ID = -1
 			client.Closed = false

@@ -1,4 +1,4 @@
-# cc-websocket-bridge
+# The bridge from cc to x86
 A bridge server between the world of shitty lua computers and the beautiful freedom governed by x86, via websockets <3 
 
 A python client to connect to this bridge server (aka beautiful x86): https://github.com/ACoolUsername9001/python_computercraft
